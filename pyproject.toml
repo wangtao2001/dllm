@@ -1,9 +1,6 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools]
-packages = ["dllm"]
+requires = ["hatchling>=1.26.0"]
+build-backend = "hatchling.build"
 
 [project]
 name = "dllm"
@@ -33,6 +30,9 @@ optional = [
     "vllm==0.8.5.post1",
     "flash-attn==2.8.3",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["dllm"]
 
 [tool.black]
 line-length = 88
