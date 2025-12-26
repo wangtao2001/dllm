@@ -17,6 +17,7 @@ import transformers
 
 from dllm.core.schedulers import BaseAlphaScheduler, LinearAlphaScheduler
 from dllm.utils.data import prepend_bos
+from .utils import EpochPPLMeter
 
 
 class MDLMTrainer(transformers.Trainer):
@@ -25,7 +26,8 @@ class MDLMTrainer(transformers.Trainer):
         self,
         scheduler: BaseAlphaScheduler | None = None,
         time_epsilon: float = 1e-3,
-        loss_weight_type: str = "scheduler",  # "ones"
+        loss_weight_type: str = "scheduler",  # "scheduler", "uniform"
+        loss_normalization_type: str = "sequence",  # "batch", "sequence", "token"
         right_shift_logits: bool = False,
         *args,
         **kwargs,
@@ -38,7 +40,11 @@ class MDLMTrainer(transformers.Trainer):
         self.scheduler = scheduler or LinearAlphaScheduler()
         self.time_epsilon = time_epsilon
         self.loss_weight_type = loss_weight_type
+        self.loss_normalization_type = loss_normalization_type
         self.right_shift_logits = right_shift_logits
+
+        self.epoch_meter = EpochPPLMeter(self, train_prefix="train", eval_prefix="eval")
+        self.add_callback(self.epoch_meter)
 
     def _preprocess_inputs(self, inputs):
         if self.right_shift_logits:
@@ -75,8 +81,8 @@ class MDLMTrainer(transformers.Trainer):
         """Compute loss weights given timestep t and other arguments."""
         b, l = inputs["input_ids"].shape
         if self.loss_weight_type == "scheduler":
-            loss_weights = self.scheduler.weight(t).unsqueeze(1).repeat(1, l)  # b, 1
-        elif self.loss_weight_type == "ones":
+            loss_weights = self.scheduler.weight(t).unsqueeze(1).repeat(1, l)
+        elif self.loss_weight_type == "uniform":
             loss_weights = torch.ones_like(inputs["input_ids"])
         else:
             raise NotImplementedError
@@ -127,14 +133,15 @@ class MDLMTrainer(transformers.Trainer):
             inputs.get("attention_mask", None),
         )
         b, l = input_ids.shape
+        token_cnt_per_seq = torch.sum(labels != -100, dim=1, keepdim=True)  # [b, 1]
 
         # === 1. Sample diffusion timesteps ===
         # Each example draws a random timestep t ∈ [ε, 1), where ε avoids degenerate values near 0.
         # The scheduler defines the masking rate α(t); we convert it to a masking probability p_mask = 1 - α(t).
         t = self.time_epsilon + (1 - self.time_epsilon) * torch.rand(
             b, device=input_ids.device
-        )
-        p_mask = 1 - self.scheduler(t).unsqueeze(1).expand(b, l)
+        )  # [b]
+        p_mask = 1.0 - self.scheduler(t).unsqueeze(1).expand(b, l)  # [b, l]
 
         # === 2. Apply stochastic masking ===
         # Tokens are masked independently according to p_mask(t).
@@ -157,6 +164,11 @@ class MDLMTrainer(transformers.Trainer):
         # If no positions were masked, return a zero loss to keep gradients valid.
         # This step is necessary for Deepspeed Zero-{2,3}
         if not masked_indices.any():
+            self.epoch_meter.update(
+                split="train" if model.training else "eval", 
+                nll_sum=logits.sum() * 0.0, 
+                token_cnt=token_cnt_per_seq.sum(),
+            )
             return (
                 (logits.sum() * 0.0, outputs) if return_outputs else logits.sum() * 0.0
             )
@@ -176,11 +188,21 @@ class MDLMTrainer(transformers.Trainer):
         )
         token_loss = token_loss * loss_weights[masked_indices]
 
-        # === 7. Normalize loss per effective token length ===
-        # Normalize each sequence’s contribution by its number of valid tokens,
-        # then average over the batch for stability across variable-length inputs.
-        effective_lengths = torch.sum(labels != -100, dim=1, keepdim=True).expand(b, l)
-        loss = torch.sum(token_loss / effective_lengths[masked_indices]) / b
+        # === 7. Normalize loss ===
+        if self.loss_normalization_type == "batch":
+            token_loss_normalized = token_loss / b
+        elif self.loss_normalization_type == "sequence":
+            token_loss_normalized = token_loss / token_cnt_per_seq.expand(-1, l)[masked_indices] / b
+        elif self.loss_normalization_type == "token":
+            token_loss_normalized = token_loss / token_cnt_per_seq.sum()
+        else:
+            raise ValueError("Invalid loss_normalization_type.")
+        loss = token_loss_normalized.sum()
 
         # === 8. Return final loss (and optionally model outputs) ===
+        self.epoch_meter.update(
+            split="train" if model.training else "eval", 
+            nll_sum=token_loss.sum(), 
+            token_cnt=token_cnt_per_seq.sum(),
+        ) # `nll_sum / token_cnt` is equivalent to `loss` when `self.loss_normalization_type == "token"``
         return (loss, outputs) if return_outputs else loss
