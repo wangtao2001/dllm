@@ -65,16 +65,14 @@ class DataArguments(dllm.utils.DataArguments):
 
 
 @dataclass
-class TrainingArguments(dllm.utils.TrainingArguments):
+class TrainingArguments(dllm.pipelines.dream.DreamTrainer.DreamConfig):
     output_dir: str = (
         "models/Dream-v0-Base-7B/dclm-baseline-1.0[train:10_000_000,test:10_000]"
     )
-    learning_rate: float = 3e-4
-    max_steps: int = 2_000
+    max_steps: int = 100_000
+    learning_rate: float = 1e-4
     per_device_train_batch_size: int = 4
     gradient_accumulation_steps: int = 4
-    eval_steps: float = 0.05
-    save_steps: float = 0.05
     # Dream PT specific args
     # Note: Since Dream’s pretraining recipe is not public,
     # this is only a reference implementation following LLaDA’s data processing approach.
@@ -144,7 +142,6 @@ def train():
         train_dataset=dataset["train"],
         eval_dataset=dataset.get("test", None),
         args=training_args,
-        loss_weight_type=training_args.loss_weight_type,
         data_collator=transformers.DataCollatorForSeq2Seq(
             tokenizer,
             return_tensors="pt",

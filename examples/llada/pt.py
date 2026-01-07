@@ -67,16 +67,14 @@ class DataArguments(dllm.utils.DataArguments):
 
 
 @dataclass
-class TrainingArguments(dllm.utils.TrainingArguments):
+class TrainingArguments(dllm.core.trainers.MDLMTrainer.MDLMConfig):
     output_dir: str = (
         "models/LLaDA-8B-Base/dclm-baseline-1.0[train:10_000_000,test:10_000]"
     )
-    learning_rate: float = 3e-4
-    max_steps: int = 2_000
+    max_steps: int = 100_000
+    learning_rate: float = 1e-4
     per_device_train_batch_size: int = 4
     gradient_accumulation_steps: int = 4
-    eval_steps: float = 0.05
-    save_steps: float = 0.05
 
 
 def train():
@@ -85,9 +83,6 @@ def train():
         (ModelArguments, DataArguments, TrainingArguments)
     )
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-    # necessary for streaming dataset
-    if data_args.streaming:
-        training_args.accelerator_config.dispatch_batches = False
     dllm.utils.print_args_main(model_args, data_args, training_args)
     dllm.utils.initial_training_setup(model_args, data_args, training_args)
 

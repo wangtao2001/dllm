@@ -2,55 +2,55 @@
 Local users
 ------------
 - 1 GPU (LoRA, useful for testing):
-    accelerate launch \
+    PYTHONPATH=. accelerate launch \
         --config_file scripts/accelerate_configs/ddp.yaml --num_processes 1 \
-        examples/editflow/llada/sft.py \
+        examples/editflow/bert/pt.py \
         --lora True
 
 - 8 GPUs (FSDP):
-    accelerate launch \
+    PYTHONPATH=. accelerate launch \
         --config_file scripts/accelerate_configs/fsdp.yaml \
-        examples/editflow/llada/sft.py
+        examples/editflow/bert/pt.py
 
 Slurm users
 # Note: run `mkdir logs` before running sbatch; and adjust
 #       `partition` and `quotatype` in `scripts/train.slurm.sh` for your cluster.
 ------------
 - 1 Node, 8 GPUs (FSDP):
-    sbatch --gres=gpu:1 scripts/train.slurm.sh \
+    PYTHONPATH=. sbatch --gres=gpu:1 scripts/train.slurm.sh \
         --accelerate_config "fsdp" \
-        --script_path "examples/editflow/llada/sft.py"
+        --script_path "examples/editflow/bert/pt.py"
 
-- 2 Nodes, 16 GPUs (FSDP):
-    sbatch --nodes=2 --gres=gpu:8 scripts/train.slurm.sh \
+- 24 Nodes, 192 GPUs (FSDP):
+    PYTHONPATH=. sbatch --nodes=24 --gres=gpu:8 scripts/train.slurm.sh \
         --accelerate_config "fsdp" \
-        --script_path "examples/editflow/llada/sft.py"
+        --script_path "examples/editflow/bert/pt.py"
 """
 
 from dataclasses import dataclass
 
 import transformers
 
-from examples.editflow import sft as editflow_sft
+from examples.editflow import pt as editflow_pt
 
 
 @dataclass
-class ModelArguments(editflow_sft.ModelArguments):
-    model_name_or_path: str = (
-        "models/EditFlow-LLaDA-8B-Base/dclm-baseline-1.0[train:10_000_000,test:10_000]/checkpoint-final"
-    )
+class ModelArguments(editflow_pt.ModelArguments):
+    model_name_or_path: str = "models/editflow/ModernBERT-large"
 
 
 @dataclass
-class DataArguments(editflow_sft.DataArguments):
-    dataset_args: str = "allenai/tulu-3-sft-mixture[train:10000,test:1000]"
+class DataArguments(editflow_pt.DataArguments):
+    dataset_args: str = "mlfoundations/dclm-baseline-1.0[train:10_000_000,test:10_000]"
 
 
 @dataclass
-class TrainingArguments(editflow_sft.TrainingArguments):
+class TrainingArguments(editflow_pt.TrainingArguments):
     output_dir: str = (
-        "models/EditFlow-LLaDA-8B-Instruct-SFT/tulu-3-sft-mixture[train:10000,test:1000]"
+        "models/editflow/ModernBERT-large/dclm-baseline-1.0[train:10_000_000,test:10_000]"
     )
+    per_device_train_batch_size: int = 16
+    per_device_eval_batch_size: int = 16
 
 
 if __name__ == "__main__":
@@ -59,7 +59,7 @@ if __name__ == "__main__":
         (ModelArguments, DataArguments, TrainingArguments)
     )
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-    editflow_sft.train(
+    editflow_pt.train(
         model_args=model_args,
         data_args=data_args,
         training_args=training_args,

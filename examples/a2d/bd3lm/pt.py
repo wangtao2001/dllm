@@ -18,12 +18,12 @@ Slurm users
 - 1 Node, 8 GPUs (ZeRO-2):
     sbatch --gres=gpu:1 scripts/train.slurm.sh \
         --accelerate_config "zero2" \
-        --script_path "examples/bd3lm/mdlm/pt.py"
+        --script_path "examples/a2d/bd3lm/pt.py"
 
 - 2 Nodes, 16 GPUs (ZeRO-2):
     sbatch --nodes=2 --gres=gpu:8 scripts/train.slurm.sh \
         --accelerate_config "zero2" \
-        --script_path "examples/bd3lm/mdlm/pt.py"
+        --script_path "examples/a2d/bd3lm/pt.py"
 """
 
 import functools
@@ -60,17 +60,14 @@ class DataArguments(dllm.utils.DataArguments):
 
 
 @dataclass
-class TrainingArguments(dllm.utils.TrainingArguments):
+class TrainingArguments(dllm.core.trainers.BD3LMTrainer.BD3LMConfig):
     output_dir: str = "models/a2d/Qwen3-0.6B/bd3lm/tiny-shakespeare"
     num_train_epochs: int = 20
     learning_rate: float = 1e-4
     per_device_train_batch_size: int = 16
     per_device_eval_batch_size: int = 16
-    eval_steps: float = 0.1
-    save_steps: float = 0.1
-    # a2d-specific
+    # bd3lm
     block_size: int = 32
-    right_shift_logits: bool = False
 
 
 def train():
@@ -125,8 +122,6 @@ def train():
         train_dataset=dataset["train"],
         eval_dataset=dataset.get("test", None),
         args=training_args,
-        block_size=training_args.block_size,
-        right_shift_logits=training_args.right_shift_logits,
         data_collator=transformers.DataCollatorForSeq2Seq(
             tokenizer,
             return_tensors="pt",
